@@ -1,0 +1,45 @@
+@startuml 01-create-snippet
+title Crear snippet con validación (US #1, #3)
+autonumber
+
+actor "Usuario" as user
+participant "UI" as ui
+participant "nginx" as nginx
+participant "Snippet Service" as snippet
+participant "PrintScript Service" as runner
+database "Snippet DB" as sdb
+participant "Azure Blob Storage" as assets
+participant "Permission Service" as perm
+queue "Redis Streams" as redis
+
+user -> ui : completa nombre, descripción, lenguaje, versión\ny sube archivo o escribe en el editor
+ui -> nginx : POST /api/snippets (JWT)
+nginx -> snippet : POST /snippets
+snippet -> snippet : valida JWT y obtiene userId
+
+snippet -> runner : POST /validate { content, version }
+
+alt snippet inválido
+    runner --> snippet : 422 { errors: [rule, line, column] }
+    snippet --> nginx : 422 { errors }
+    nginx --> ui : 422 { errors }
+    ui --> user : muestra regla incumplida, línea y columna
+else snippet válido
+    runner --> snippet : 200 { valid: true }
+
+    snippet -> sdb : INSERT snippet (lintStatus = PENDING)
+    sdb --> snippet : id
+    snippet -> assets : sube contenido (blob "snippet-{id}")
+    snippet -> perm : POST /permissions { userId, snippetId, OWNER }
+    perm --> snippet : 201
+
+    snippet -> sdb : obtiene reglas de lint del usuario
+    snippet -> redis : XADD lint-requests { snippetId, content, version, rules }
+
+    snippet --> nginx : 201 { snippet }
+    nginx --> ui : 201 { snippet }
+    ui --> user : muestra el snippet creado (lint pendiente)
+end
+
+@enduml
+

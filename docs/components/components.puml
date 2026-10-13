@@ -1,0 +1,53 @@
+@startuml components
+title Snippet Searcher - Diagrama de componentes
+
+actor "Usuario" as user
+
+cloud "Auth0" as auth0
+cloud "Azure Blob Storage" as assets
+
+package "Snippet Searcher" {
+    component "UI (Web)" as ui
+
+    component "nginx" as nginx
+
+    component "Snippet Service" as snippet
+    database "Snippet DB" as sdb
+
+    component "Permission Service" as perm
+    database "Permission DB" as pdb
+
+    component "PrintScript Service" as runner
+    artifact "PrintScript (librería)" as pslib
+
+    queue "Redis Streams" as redis
+}
+
+' Entrada del usuario
+user --> ui : usa (navegador)
+ui --> auth0 : login (OAuth)
+ui --> nginx : HTTPS + JWT
+nginx --> snippet : REST
+
+' Snippet Service
+snippet --> sdb : JDBC
+snippet --> assets : lee/escribe contenido
+snippet --> perm : REST (permisos)
+snippet --> runner : REST (validar, formatear, ejecutar)
+snippet --> redis : publica pedidos de lint/formato
+
+' Procesamiento asincrónico
+redis ..> runner : consume pedidos
+runner ..> redis : publica resultados
+redis ..> snippet : consume resultados
+
+' Permission Service
+perm --> pdb : JDBC
+perm --> auth0 : Management API (usuarios)
+
+' PrintScript Service
+runner ..> pslib : usa
+
+note right of nginx : todos los servicios validan\nel JWT de Auth0
+
+@enduml
