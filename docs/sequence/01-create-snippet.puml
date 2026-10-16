@@ -7,8 +7,8 @@ participant "UI" as ui
 participant "nginx" as nginx
 participant "Snippet Service" as snippet
 participant "PrintScript Service" as runner
-database "Snippet DB" as sdb
 participant "Azure Blob Storage" as assets
+database "Snippet DB" as sdb
 participant "Permission Service" as perm
 queue "Redis Streams" as redis
 
@@ -27,19 +27,34 @@ alt snippet inválido
 else snippet válido
     runner --> snippet : 200 { valid: true }
 
-    snippet -> sdb : INSERT snippet (lintStatus = PENDING)
-    sdb --> snippet : id
-    snippet -> assets : sube contenido (blob "snippet-{id}")
+    snippet -> snippet : genera id (UUID)
+    snippet -> assets : sube "snippets/{id}/original"
+    snippet -> sdb : INSERT snippet (lintStatus = PENDING, formatStatus = PENDING)
     snippet -> perm : POST /permissions { userId, snippetId, OWNER }
-    perm --> snippet : 201
 
-    snippet -> sdb : obtiene reglas de lint del usuario
-    snippet -> redis : XADD lint-requests { snippetId, content, version, rules }
+    alt falla la creación del permiso
+        perm --> snippet : error
+        snippet -> sdb : DELETE snippet
+        snippet -> assets : borra "snippets/{id}/original"
+        snippet --> nginx : 503
+        nginx --> ui : 503
+        ui --> user : informa que no se pudo crear
+    else permiso creado
+        perm --> snippet : 201
 
-    snippet --> nginx : 201 { snippet }
-    nginx --> ui : 201 { snippet }
-    ui --> user : muestra el snippet creado (lint pendiente)
+        snippet -> sdb : obtiene reglas de lint y formato del usuario
+        snippet -> redis : XADD lint-requests { snippetId, revision, content, version, rules }
+        snippet -> redis : XADD format-requests { snippetId, revision, content, version, rules }
+
+        snippet --> nginx : 201 { snippet }
+        nginx --> ui : 201 { snippet }
+        ui --> user : muestra el snippet creado (lint pendiente)
+    end
 end
 
-@enduml
+note over snippet, assets
+  El contenido se sube antes del INSERT: si el INSERT falla,
+  queda a lo sumo un blob huérfano, nunca una fila sin contenido.
+end note
 
+@enduml

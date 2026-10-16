@@ -1,7 +1,9 @@
 # Contratos
 
-Endpoints HTTP y eventos de cada servicio. Todos los endpoints requieren un JWT de Auth0
+Endpoints HTTP y eventos de cada servicio. Los endpoints públicos (Snippet Service) requieren un JWT de Auth0
 en el header `Authorization: Bearer <token>`; el `userId` se obtiene del token (`sub`), nunca del body.
+Permission Service y PrintScript Service no se exponen por nginx: solo se acceden desde la red interna,
+y reciben el `userId` como parámetro desde Snippet Service.
 
 ## Formato de error común
 
@@ -28,6 +30,7 @@ Cuando un snippet es inválido, los endpoints responden `422 Unprocessable Entit
 | GET | `/snippets` | Listar snippets accesibles con filtros y orden | #5 |
 | GET | `/snippets/{id}` | Detalle del snippet | #6 |
 | GET | `/snippets/{id}/download?formatted=true\|false` | Descargar original o formateado | #13 |
+| DELETE | `/snippets/{id}` | Borrar snippet, sus tests, su contenido y sus permisos (solo owner) | — |
 | POST | `/snippets/{id}/share` | Compartir con otro usuario (solo owner) | #7 |
 | GET | `/users?search={texto}` | Buscar usuarios para compartir | #7 |
 
@@ -60,7 +63,7 @@ Respuesta `201 Created`: el snippet creado. Respuesta `422`: lista de errores (v
 
 ```json
 {
-  "id": "42",
+  "id": "6f1c2a9e-3b7d-4c1e-9a52-0d8e7f4b1c23",
   "name": "Hola mundo",
   "description": "Imprime un saludo",
   "language": "printscript",
@@ -68,6 +71,7 @@ Respuesta `201 Created`: el snippet creado. Respuesta `422`: lista de errores (v
   "owner": { "id": "auth0|abc", "name": "Martina" },
   "content": "println(\"Hola\");",
   "lintStatus": "INVALID",
+  "formatStatus": "DONE",
   "violations": [
     { "rule": "identifier-case", "line": 1, "column": 5, "message": "Se esperaba camelCase" }
   ]
@@ -75,6 +79,20 @@ Respuesta `201 Created`: el snippet creado. Respuesta `422`: lista de errores (v
 ```
 
 `lintStatus`: `PENDING` (en proceso), `VALID`, `INVALID`, `FAILED` (no se pudo procesar).
+La validez se calcula con las reglas de lint del **owner** del snippet.
+
+`formatStatus`: `PENDING`, `DONE`, `FAILED`.
+
+**GET `/snippets/{id}/download`** — devuelve el archivo como `text/plain` con
+`Content-Disposition: attachment`. Con `formatted=true` devuelve la versión formateada; si todavía no está
+lista (`formatStatus` distinto de `DONE`), Snippet Service la formatea en el momento con `POST /format`.
+
+Contenido en Azure Blob Storage, contenedor `snippets`:
+
+| Blob | Contenido |
+|---|---|
+| `snippets/{id}/original` | Lo que subió el usuario |
+| `snippets/{id}/formatted` | Última versión formateada con las reglas del owner |
 
 ### Tests
 
@@ -96,6 +114,9 @@ Respuesta `201 Created`: el snippet creado. Respuesta `422`: lista de errores (v
 
 Respuesta de `/run`: `{ "passed": false, "outputs": ["Hola"], "error": null }`
 
+`GET /snippets/{id}/tests` incluye el resultado del último run de cada test (`lastStatus`: `NOT_RUN`,
+`PENDING`, `PASSED`, `FAILED`, `ERROR`), que también se actualiza con los tests automáticos (#16).
+
 ### Reglas
 
 | Método | Ruta | Descripción | US |
@@ -113,12 +134,15 @@ Respuesta de `/run`: `{ "passed": false, "outputs": ["Hola"], "error": null }`
 ```
 
 `PUT` responde `202 Accepted`: los cambios se guardan y el reprocesamiento continúa en segundo plano.
+Las reglas son por usuario y se aplican a los snippets de los que es owner.
 
 ### Ejecución interactiva (más adelante)
 
 | Protocolo | Ruta | Descripción | US |
 |---|---|---|---|
-| WebSocket | `/snippets/{id}/run` | El servidor envía outputs y pedidos de input; el cliente responde inputs | #10 |
+| WebSocket | `/snippets/{id}/run` | El servidor envía outputs y pedidos de input; el cliente responde inputs | #9, #10 |
+
+nginx debe reenviar los headers `Upgrade` y `Connection` para esta ruta.
 
 ---
 
@@ -126,7 +150,7 @@ Respuesta de `/run`: `{ "passed": false, "outputs": ["Hola"], "error": null }`
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| POST | `/permissions` | Crear permiso `{ userId, snippetId, role: OWNER \| READ }` |
+| POST | `/permissions` | Crear permiso `{ userId, snippetId, role: OWNER \| READ }`; si ya existe, no hace nada |
 | GET | `/permissions/check?userId=&snippetId=` | Rol del usuario sobre el snippet; `404` si no tiene |
 | GET | `/permissions/snippets?userId=&relation=` | IDs de snippets accesibles |
 | DELETE | `/permissions/snippets/{snippetId}` | Borrar permisos de un snippet |
@@ -155,14 +179,26 @@ Cada lenguaje futuro expone esta misma interfaz en su propio servicio.
 
 | Stream | Publica | Consume | Payload |
 |---|---|---|---|
-| `lint-requests` | Snippet | PrintScript | `{ snippetId, content, version, rules }` |
-| `lint-results` | PrintScript | Snippet | `{ snippetId, valid, violations }` |
-| `format-requests` | Snippet | PrintScript | `{ snippetId, content, version, rules }` |
-| `format-results` | PrintScript | Snippet | `{ snippetId, content }` |
+| `lint-requests` | Snippet | PrintScript | `{ snippetId, revision, content, version, rules }` |
+| `lint-results` | PrintScript | Snippet | `{ snippetId, revision, status: VALID \| INVALID \| FAILED, violations }` |
+| `format-requests` | Snippet | PrintScript | `{ snippetId, revision, content, version, rules }` |
+| `format-results` | PrintScript | Snippet | `{ snippetId, revision, status: DONE \| FAILED, content }` |
+| `test-requests` | Snippet | PrintScript | `{ snippetId, testId, content, version, inputs, expectedOutputs }` |
+| `test-results` | PrintScript | Snippet | `{ snippetId, testId, passed, outputs, error }` |
+| `parser-versions` | PrintScript | Snippet | `{ language, version }` (al arrancar) |
 
 **Tolerancia a fallos (#12, #15):**
 - Cada consumidor usa un *consumer group* y hace `ACK` recién después de procesar el mensaje.
-- Si un worker se cae, los mensajes sin `ACK` quedan pendientes y otro worker los retoma.
-- Después de 3 intentos fallidos, el snippet se marca `FAILED` y se saltea.
+- Si un worker se cae, los mensajes sin `ACK` quedan pendientes; otro worker los retoma con `XAUTOCLAIM`
+  cuando llevan más de N segundos inactivos.
+- Si un mensaje ya se entregó más de 3 veces, el worker publica el resultado con `status: FAILED` y hace `ACK`:
+  el snippet queda marcado y el proceso sigue con el resto.
+- Cada pedido lleva la `revision` del snippet. Si llega un resultado con una revisión vieja (las reglas o el
+  contenido cambiaron después), Snippet Service lo descarta.
 
-**Re-validación por nueva versión del parser (#18):** se publica un `lint-requests` por cada snippet.
+**Tests automáticos (#16):** al actualizar un snippet se publica un `test-requests` por cada uno de sus tests.
+El resultado no afecta al update.
+
+**Re-validación por nueva versión del parser (#17):** al arrancar, PrintScript Service publica su versión en
+`parser-versions`. Snippet Service la compara con la última registrada en `parser_version`; si cambió, publica
+un `lint-requests` por cada snippet de ese lenguaje.
