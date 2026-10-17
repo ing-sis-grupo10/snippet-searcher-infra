@@ -1,0 +1,47 @@
+services:
+  snippet-db:
+    image: postgres:16
+    container_name: snippet-db
+    environment:
+      POSTGRES_USER: ${SNIPPET_DB_USER}
+      POSTGRES_PASSWORD: ${SNIPPET_DB_PASSWORD}
+      POSTGRES_DB: ${SNIPPET_DB_NAME}
+    ports:
+      - "5440:5432"
+    volumes:
+      - snippet-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  permission-db:
+    image: postgres:16
+    container_name: permission-db
+    environment:
+      POSTGRES_USER: ${PERMISSION_DB_USER}
+      POSTGRES_PASSWORD: ${PERMISSION_DB_PASSWORD}
+      POSTGRES_DB: ${PERMISSION_DB_NAME}
+    ports:
+      - "5441:5432"
+    volumes:
+      - permission-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+volumes:
+  snippet-db-data:
+  permission-db-data:
