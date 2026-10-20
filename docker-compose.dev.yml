@@ -17,6 +17,17 @@ services:
       retries: 20
     restart: unless-stopped
 
+  printscript-service:
+    build:
+      context: ../printscript-service
+      secrets:
+        - github_actor
+        - github_token
+    container_name: printscript-service
+    ports:
+      - "8083:8080"
+    restart: unless-stopped
+
   snippet-service:
     build: ../snippet-service
     container_name: snippet-service
@@ -73,4 +84,10 @@ services:
 volumes:
   snippet-db-data:
   permission-db-data:
+
+secrets:
+  github_actor:
+    environment: GITHUB_ACTOR
+  github_token:
+    environment: GITHUB_TOKEN
 
