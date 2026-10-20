@@ -17,6 +17,31 @@ services:
       retries: 20
     restart: unless-stopped
 
+  printscript-service:
+    build:
+      context: ../printscript-service
+      secrets:
+        - github_actor
+        - github_token
+    container_name: printscript-service
+    ports:
+      - "8083:8080"
+    restart: unless-stopped
+
+  snippet-service:
+    build: ../snippet-service
+    container_name: snippet-service
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://snippet-db:5432/${SNIPPET_DB_NAME}
+      SPRING_DATASOURCE_USERNAME: ${SNIPPET_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${SNIPPET_DB_PASSWORD}
+    ports:
+      - "8082:8080"
+    depends_on:
+      snippet-db:
+        condition: service_healthy
+    restart: unless-stopped
+
   permission-db:
     image: postgres:16
     container_name: permission-db
@@ -35,6 +60,20 @@ services:
       retries: 20
     restart: unless-stopped
 
+  permission-service:
+    build: ../permission-service
+    container_name: permission-service
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://permission-db:5432/${PERMISSION_DB_NAME}
+      SPRING_DATASOURCE_USERNAME: ${PERMISSION_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${PERMISSION_DB_PASSWORD}
+    ports:
+      - "8081:8080"
+    depends_on:
+      permission-db:
+        condition: service_healthy
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     container_name: redis
@@ -45,3 +84,10 @@ services:
 volumes:
   snippet-db-data:
   permission-db-data:
+
+secrets:
+  github_actor:
+    environment: GITHUB_ACTOR
+  github_token:
+    environment: GITHUB_TOKEN
+
