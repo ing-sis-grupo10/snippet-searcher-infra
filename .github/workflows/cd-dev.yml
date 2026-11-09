@@ -1,29 +1,42 @@
-name: CD Dev
+name: "Continuous Deployment Dev"
 
 on:
   push:
-    branches: [dev]
-  workflow_dispatch:
+    branches:
+      - dev
 
 jobs:
-  deploy:
+  deploy_to_vm:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
     steps:
-      - name: Deploy a vm-dev
+      - name: Determine service
+        run: echo "CHANGED_SERVICE=$(basename $GITHUB_REPOSITORY)" >> $GITHUB_ENV
+
+      - name: Deploy to VM
         uses: appleboy/ssh-action@v1.2.5
-        env:
-          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
-          GHCR_PAT: ${{ secrets.GHCR_PAT }}
         with:
           host: ${{ secrets.VM_HOST_DEV }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_KEY }}
-          envs: GHCR_USERNAME,GHCR_PAT
+          envs: CHANGED_SERVICE
+
           script: |
             set -e
-            cd ~/infra
-            git pull --ff-only origin dev
-            echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
-            set -a; . ./.env; set +a
-            docker stack deploy --with-registry-auth -c docker-stack.yml snippet
-            docker service update --force --detach snippet_nginx
+            cd infra
+            git pull origin dev
+
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
+
+            if [ "${CHANGED_SERVICE}" = "snippet-searcher-infra" ]; then
+              echo "Redeploy completo de infra (dev)"
+              set -a; . ./.env; set +a
+              docker stack deploy --with-registry-auth --prune -c docker-stack.yml snippet
+              docker service update --force --detach snippet_nginx
+            else
+              echo "Redeploy solo de ${CHANGED_SERVICE} (dev)"
+              docker service update --with-registry-auth --image "ghcr.io/ing-sis-grupo10/${CHANGED_SERVICE}:dev" "snippet_${CHANGED_SERVICE}"
+            fi
