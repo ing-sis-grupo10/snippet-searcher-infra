@@ -1,0 +1,45 @@
+name: "Continuous Deployment Prod"
+
+on:
+  push:
+    branches:
+      - prod
+  pull_request:
+    branches:
+      - prod
+
+jobs:
+  deploy_to_vm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Determine service
+        run: echo "CHANGED_SERVICE=$(basename $GITHUB_REPOSITORY)" >> $GITHUB_ENV
+
+      - name: Deploy to VM
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.VM_HOST_PROD }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_KEY }}
+          envs: CHANGED_SERVICE
+
+          script: |
+            set -e
+            cd infra
+            git pull origin prod
+
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
+
+            if [ "${CHANGED_SERVICE}" = "snippet-searcher-infra" ]; then
+              echo "Redeploy completo de infra (prod)"
+              set -a; . ./.env; set +a
+              docker stack deploy --with-registry-auth -c docker-stack.yml snippet
+              docker service update --force --detach snippet_nginx
+            else
+              echo "Redeploy solo de ${CHANGED_SERVICE} (prod)"
+              docker service update --with-registry-auth --image "ghcr.io/ing-sis-grupo10/${CHANGED_SERVICE}:prod" "snippet_${CHANGED_SERVICE}"
+            fi
