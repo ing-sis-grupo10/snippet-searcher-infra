@@ -1,0 +1,39 @@
+@startuml 07-new-parser-version
+title Re-validar todos los snippets con una nueva versión del parser (US #17)
+autonumber
+
+actor "Equipo" as dev
+participant "PrintScript Service" as runner
+queue "Redis Streams" as redis
+participant "Snippet Service" as snippet
+database "Snippet DB" as sdb
+participant "Azure Blob Storage" as assets
+
+dev -> runner : deploy con nueva versión de la librería PrintScript
+runner -> runner : arranca
+runner -> redis : XADD parser-versions { language: "printscript", version: "1.2.0" }
+
+redis -> snippet : XREADGROUP parser-versions
+snippet -> sdb : SELECT version FROM parser_version WHERE language = ?
+
+alt misma versión (reinicio normal o réplica nueva)
+    snippet -> snippet : no hace nada
+else versión distinta
+    snippet -> sdb : UPDATE parser_version
+    snippet -> sdb : snippets del lenguaje:\nlintStatus = PENDING, lintRevision + 1
+    loop por cada snippet del lenguaje
+        snippet -> assets : lee "snippets/{id}/original"
+        snippet -> sdb : reglas de lint del owner
+        snippet -> redis : XADD lint-requests\n{ snippetId, revision, content, version, rules }
+    end
+end
+snippet -> redis : XACK parser-versions
+
+note over runner, snippet
+  El procesamiento de lint-requests es el mismo que en el diagrama 03,
+  con la misma tolerancia a fallos.
+  PrintScript Service sigue sin estado: solo informa su versión;
+  Snippet Service decide si cambió.
+end note
+
+@enduml

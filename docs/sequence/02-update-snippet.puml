@@ -1,0 +1,67 @@
+@startuml 02-update-snippet
+title Actualizar snippet y correr sus tests automáticamente (US #2, #4, #16)
+autonumber
+
+actor "Usuario" as user
+participant "UI" as ui
+participant "nginx" as nginx
+participant "Snippet Service" as snippet
+participant "Permission Service" as perm
+participant "PrintScript Service" as runner
+participant "Azure Blob Storage" as assets
+database "Snippet DB" as sdb
+queue "Redis Streams" as redis
+
+user -> ui : edita el snippet (archivo o editor)
+ui -> nginx : PUT /api/snippets/{id} (JWT)
+nginx -> snippet : PUT /snippets/{id}
+snippet -> snippet : valida JWT y obtiene userId
+
+snippet -> perm : GET /permissions/check?userId=&snippetId=
+alt no es OWNER
+    perm --> snippet : READ / 404
+    snippet --> nginx : 403
+    nginx --> ui : 403
+    ui --> user : no tiene permiso para editar
+else es OWNER
+    perm --> snippet : OWNER
+
+    snippet -> runner : POST /validate { content, version }
+    alt snippet inválido
+        runner --> snippet : 422 { errors }
+        snippet --> nginx : 422 { errors }
+        nginx --> ui : 422 { errors }
+        ui --> user : muestra regla incumplida, línea y columna
+    else snippet válido
+        runner --> snippet : 200 { valid: true }
+
+        snippet -> assets : reemplaza "snippets/{id}/original"
+        snippet -> sdb : UPDATE snippet (datos, lintStatus = PENDING,\nformatStatus = PENDING, revisiones + 1)
+        snippet -> sdb : marca tests como PENDING
+        snippet -> redis : XADD lint-requests { snippetId, revision, ... }
+        snippet -> redis : XADD format-requests { snippetId, revision, ... }
+        snippet -> redis : XADD test-requests (uno por test)\n{ snippetId, testId, content, version, inputs, expectedOutputs }
+
+        snippet --> nginx : 200 { snippet }
+        nginx --> ui : 200 { snippet }
+        ui --> user : muestra el snippet actualizado
+    end
+end
+
+== Procesamiento asincrónico de los tests (no bloquea el update) ==
+
+loop por cada test pendiente
+    redis -> runner : XREADGROUP test-requests
+    runner -> runner : ejecuta con los inputs y compara outputs
+    runner -> redis : XADD test-results { snippetId, testId, passed, outputs, error }
+    runner -> redis : XACK test-requests
+    redis -> snippet : XREADGROUP test-results
+    snippet -> sdb : guarda last_status, last_outputs, last_run_at
+    snippet -> redis : XACK test-results
+end
+
+note over runner, redis
+  Lint y formato se procesan igual que en el diagrama 03.
+end note
+
+@enduml

@@ -1,0 +1,71 @@
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - snippet-net
+
+  snippet-service:
+    image: ghcr.io/ing-sis-grupo10/snippet-service:${IMAGE_TAG}
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://snippet-db:5432/${SNIPPET_DB_NAME}
+      SPRING_DATASOURCE_USERNAME: ${SNIPPET_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${SNIPPET_DB_PASSWORD}
+      JAVA_TOOL_OPTIONS: -Xmx512m
+    networks:
+      - snippet-net
+
+  permission-service:
+    image: ghcr.io/ing-sis-grupo10/permission-service:${IMAGE_TAG}
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://permission-db:5432/${PERMISSION_DB_NAME}
+      SPRING_DATASOURCE_USERNAME: ${PERMISSION_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${PERMISSION_DB_PASSWORD}
+      JAVA_TOOL_OPTIONS: -Xmx512m
+    networks:
+      - snippet-net
+
+  printscript-service:
+    image: ghcr.io/ing-sis-grupo10/printscript-service:${IMAGE_TAG}
+    environment:
+      JAVA_TOOL_OPTIONS: -Xmx512m
+    networks:
+      - snippet-net
+
+  snippet-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${SNIPPET_DB_USER}
+      POSTGRES_PASSWORD: ${SNIPPET_DB_PASSWORD}
+      POSTGRES_DB: ${SNIPPET_DB_NAME}
+    volumes:
+      - snippet-db-data:/var/lib/postgresql/data
+    networks:
+      - snippet-net
+
+  permission-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${PERMISSION_DB_USER}
+      POSTGRES_PASSWORD: ${PERMISSION_DB_PASSWORD}
+      POSTGRES_DB: ${PERMISSION_DB_NAME}
+    volumes:
+      - permission-db-data:/var/lib/postgresql/data
+    networks:
+      - snippet-net
+
+  redis:
+    image: redis:7-alpine
+    networks:
+      - snippet-net
+
+networks:
+  snippet-net:
+    driver: overlay
+
+volumes:
+  snippet-db-data:
+  permission-db-data:

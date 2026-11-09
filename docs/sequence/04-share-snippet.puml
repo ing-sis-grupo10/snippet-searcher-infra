@@ -1,0 +1,51 @@
+@startuml 04-share-snippet
+title Compartir snippet (US #7)
+autonumber
+
+actor "Owner" as user
+participant "UI" as ui
+participant "nginx" as nginx
+participant "Snippet Service" as snippet
+participant "Permission Service" as perm
+database "Permission DB" as pdb
+participant "Auth0\nManagement API" as auth0
+
+== Búsqueda de usuarios (a medida que escribe) ==
+
+loop cada vez que cambia el texto
+    user -> ui : escribe parte del nombre o email
+    ui -> nginx : GET /api/users?search={texto} (JWT)
+    nginx -> snippet : GET /users?search={texto}
+    snippet -> perm : GET /users?search={texto}
+    perm -> auth0 : GET /api/v2/users?q={texto}
+    auth0 --> perm : usuarios
+    perm --> snippet : [{ id, name, email }]
+    snippet --> nginx : 200 [usuarios]
+    nginx --> ui : 200 [usuarios]
+    ui --> user : muestra el listado filtrado
+end
+
+== Compartir ==
+
+user -> ui : elige un usuario
+ui -> nginx : POST /api/snippets/{id}/share { userId } (JWT)
+nginx -> snippet : POST /snippets/{id}/share
+snippet -> snippet : valida JWT y obtiene ownerId
+snippet -> perm : GET /permissions/check?userId={ownerId}&snippetId={id}
+
+alt no es OWNER
+    perm --> snippet : READ / 404
+    snippet --> nginx : 403
+    nginx --> ui : 403
+    ui --> user : solo el owner puede compartir
+else es OWNER
+    perm --> snippet : OWNER
+    snippet -> perm : POST /permissions { userId, snippetId, READ }
+    perm -> pdb : INSERT permission\n(si ya existe, no hace nada)
+    perm --> snippet : 201
+    snippet --> nginx : 204
+    nginx --> ui : 204
+    ui --> user : snippet compartido
+end
+
+@enduml

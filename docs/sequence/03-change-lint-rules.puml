@@ -1,0 +1,71 @@
+@startuml 03-change-lint-rules
+title Cambiar reglas de linteo y re-lintear en segundo plano (US #14, #15)
+autonumber
+
+actor "Usuario" as user
+participant "UI" as ui
+participant "nginx" as nginx
+participant "Snippet Service" as snippet
+database "Snippet DB" as sdb
+participant "Azure Blob Storage" as assets
+queue "Redis Streams" as redis
+participant "PrintScript Service\n(worker A)" as workerA
+participant "PrintScript Service\n(worker B)" as workerB
+
+user -> ui : habilita / deshabilita reglas
+ui -> nginx : PUT /api/rules/lint (JWT)
+nginx -> snippet : PUT /rules/lint
+snippet -> snippet : valida JWT y obtiene userId
+snippet -> sdb : guarda las reglas del usuario
+snippet -> sdb : snippets del usuario (owner):\nlintStatus = PENDING, lintRevision + 1
+snippet --> nginx : 202 Accepted
+nginx --> ui : 202 Accepted
+ui --> user : reglas guardadas (re-linteo en curso)
+
+== Encolado (en segundo plano) ==
+
+loop por cada snippet del usuario
+    snippet -> assets : lee "snippets/{id}/original"
+    snippet -> redis : XADD lint-requests\n{ snippetId, revision, content, version, rules }
+end
+
+== Procesamiento con tolerancia a fallos ==
+
+workerA -> redis : XREADGROUP lint-requests (grupo printscript)
+redis --> workerA : mensaje snippet X
+workerA -> workerA : lintea snippet X
+
+alt worker A termina bien
+    workerA -> redis : XADD lint-results\n{ snippetId, revision, status: VALID | INVALID, violations }
+    workerA -> redis : XACK lint-requests
+else worker A se cae antes del ACK
+    workerA -[#red]> workerA : se cae
+    note over redis : el mensaje queda pendiente\n(sin ACK) en el consumer group
+    workerB -> redis : XAUTOCLAIM lint-requests\n(mensajes inactivos hace más de N segundos)
+    redis --> workerB : mensaje snippet X (entregas = 2)
+    alt entregas <= 3
+        workerB -> workerB : lintea snippet X
+        workerB -> redis : XADD lint-results { snippetId, revision, status, violations }
+    else entregas > 3 (el snippet hace fallar al worker)
+        workerB -> redis : XADD lint-results { snippetId, revision, status: FAILED }
+    end
+    workerB -> redis : XACK lint-requests
+end
+
+== Resultados ==
+
+redis -> snippet : XREADGROUP lint-results (grupo snippet)
+alt revision == lintRevision del snippet
+    snippet -> sdb : actualiza lintStatus y reemplaza violaciones
+else revision vieja (hubo otro cambio de reglas después)
+    snippet -> snippet : descarta el resultado
+end
+snippet -> redis : XACK lint-results
+
+note over user, redis
+  Formateo (US #11, #12): mismo flujo con PUT /rules/format,
+  format-requests / format-results y formatStatus. Al recibir el
+  resultado, Snippet Service guarda "snippets/{id}/formatted" en Blob Storage.
+end note
+
+@enduml

@@ -1,0 +1,42 @@
+@startuml 05-list-snippets
+title Listar snippets accesibles con filtros y orden (US #5)
+autonumber
+
+actor "Usuario" as user
+participant "UI" as ui
+participant "nginx" as nginx
+participant "Snippet Service" as snippet
+participant "Permission Service" as perm
+database "Permission DB" as pdb
+database "Snippet DB" as sdb
+
+user -> ui : elige relación, filtros y orden
+ui -> nginx : GET /api/snippets?relation=shared&name=hol&valid=true\n&sort=name,asc&page=0&size=20 (JWT)
+nginx -> snippet : GET /snippets?...
+snippet -> snippet : valida JWT y obtiene userId
+
+snippet -> perm : GET /permissions/snippets?userId=&relation=shared
+perm -> pdb : SELECT snippet_id WHERE user_id = ? AND role = READ
+pdb --> perm : ids
+perm --> snippet : [snippetIds]
+
+snippet -> sdb : SELECT ... WHERE id IN (snippetIds)\nAND name ILIKE '%hol%' AND lint_status = 'VALID'\nORDER BY name ASC LIMIT 20 OFFSET 0
+sdb --> snippet : página de snippets + total
+
+snippet --> nginx : 200 { content: [...], page, size, total }
+nginx --> ui : 200
+ui --> user : muestra la lista con su validez
+
+note right of perm
+  relation:
+  owned  → role = OWNER
+  shared → role = READ
+  all    → ambos
+end note
+
+note over snippet, sdb
+  El contenido no se lee de Blob Storage para listar:
+  la lista solo usa la metadata de la base.
+end note
+
+@enduml

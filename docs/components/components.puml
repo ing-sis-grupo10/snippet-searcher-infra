@@ -11,35 +11,37 @@ package "Snippet Searcher" {
 
     component "nginx" as nginx
 
-    component "Snippet Service" as snippet
-    database "Snippet DB" as sdb
+    package "Red interna" {
+        component "Snippet Service" as snippet
+        database "Snippet DB\n(PostgreSQL)" as sdb
 
-    component "Permission Service" as perm
-    database "Permission DB" as pdb
+        component "Permission Service" as perm
+        database "Permission DB\n(PostgreSQL)" as pdb
 
-    component "PrintScript Service" as runner
-    artifact "PrintScript (librería)" as pslib
+        component "PrintScript Service" as runner
+        artifact "PrintScript (librería)" as pslib
 
-    queue "Redis Streams" as redis
+        queue "Redis Streams" as redis
+    }
 }
 
 ' Entrada del usuario
 user --> ui : usa (navegador)
 ui --> auth0 : login (OAuth)
 ui --> nginx : HTTPS + JWT
-nginx --> snippet : REST
+nginx --> snippet : REST (/api)
 
 ' Snippet Service
 snippet --> sdb : JDBC
-snippet --> assets : lee/escribe contenido
-snippet --> perm : REST (permisos)
-snippet --> runner : REST (validar, formatear, ejecutar)
-snippet --> redis : publica pedidos de lint/formato
+snippet --> assets : lee/escribe contenido\n(original y formateado)
+snippet --> perm : REST (permisos, usuarios)
+snippet --> runner : REST (validar, formatear, correr tests)
+snippet --> redis : publica pedidos\n(lint, format, test)
 
 ' Procesamiento asincrónico
 redis ..> runner : consume pedidos
-runner ..> redis : publica resultados
-redis ..> snippet : consume resultados
+runner ..> redis : publica resultados\ny versión del parser
+redis ..> snippet : consume resultados\ny versión del parser
 
 ' Permission Service
 perm --> pdb : JDBC
@@ -48,6 +50,17 @@ perm --> auth0 : Management API (usuarios)
 ' PrintScript Service
 runner ..> pslib : usa
 
-note right of nginx : todos los servicios validan\nel JWT de Auth0
+note right of nginx
+  Solo expone Snippet Service.
+  Snippet Service valida el JWT de Auth0;
+  Permission y PrintScript solo son
+  accesibles desde la red interna.
+end note
+
+note bottom of runner
+  Sin estado. Un servicio por lenguaje:
+  un lenguaje nuevo es otro servicio
+  con la misma interfaz y sus propios streams.
+end note
 
 @enduml

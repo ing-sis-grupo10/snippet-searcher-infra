@@ -1,0 +1,109 @@
+@startuml data-model
+title Snippet Searcher - Modelo de datos
+
+hide circle
+
+package "Snippet DB (PostgreSQL)" {
+    entity "snippet" as snippet {
+        * id : UUID <<PK>>
+        --
+        * owner_id : VARCHAR
+        * name : VARCHAR
+        description : TEXT
+        * language : VARCHAR
+        * version : VARCHAR
+        * lint_status : VARCHAR
+        * lint_revision : INT
+        * format_status : VARCHAR
+        * format_revision : INT
+        * created_at : TIMESTAMP
+        * updated_at : TIMESTAMP
+    }
+
+    entity "lint_violation" as violation {
+        * id : UUID <<PK>>
+        --
+        * snippet_id : UUID <<FK>>
+        * rule : VARCHAR
+        * line : INT
+        * column : INT
+        * message : VARCHAR
+    }
+
+    entity "snippet_test" as test {
+        * id : UUID <<PK>>
+        --
+        * snippet_id : UUID <<FK>>
+        * name : VARCHAR
+        * inputs : JSONB
+        * expected_outputs : JSONB
+        * last_status : VARCHAR
+        last_outputs : JSONB
+        last_error : TEXT
+        last_run_at : TIMESTAMP
+    }
+
+    entity "user_rule" as rule {
+        * user_id : VARCHAR <<PK>>
+        * type : VARCHAR <<PK>>
+        * name : VARCHAR <<PK>>
+        --
+        * enabled : BOOLEAN
+        value : VARCHAR
+    }
+
+    entity "parser_version" as parser {
+        * language : VARCHAR <<PK>>
+        --
+        * version : VARCHAR
+        * updated_at : TIMESTAMP
+    }
+}
+
+package "Permission DB (PostgreSQL)" {
+    entity "permission" as permission {
+        * id : UUID <<PK>>
+        --
+        * snippet_id : UUID
+        * user_id : VARCHAR
+        * role : VARCHAR
+        * created_at : TIMESTAMP
+        ..
+        UNIQUE (snippet_id, user_id)
+    }
+}
+
+package "Azure Blob Storage" {
+    entity "contenedor snippets" as blob {
+        snippets/{id}/original
+        snippets/{id}/formatted
+    }
+}
+
+snippet ||--o{ violation
+snippet ||--o{ test
+snippet ||..|| blob : contenido
+snippet ||..o{ permission : snippet_id\n(otra base)
+
+note left of snippet
+  lint_status: PENDING | VALID | INVALID | FAILED
+  format_status: PENDING | DONE | FAILED
+  lint_revision / format_revision: se incrementan
+  en cada pedido;
+  los resultados con revisión vieja se descartan
+end note
+
+note bottom of test
+  last_status: NOT_RUN | PENDING | PASSED | FAILED | ERROR
+end note
+
+note top of rule
+  type: LINT | FORMAT
+  owner_id / user_id: "sub" del JWT de Auth0
+end note
+
+note bottom of permission
+  role: OWNER | READ
+end note
+
+@enduml
